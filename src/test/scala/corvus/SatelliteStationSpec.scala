@@ -34,6 +34,7 @@ class SatelliteStationSpec extends AnyFlatSpec {
       val toCore = Vec(nStateBus, Decoupled(new StateBusPacket))
       val fromCore = Vec(nStateBus, Flipped(Decoupled(new StateBusPacket)))
       val fullIntr = Output(Bool())
+      val fromCoreNonEmpty = Output(Bool())
     })
     val dut = Module(new SatelliteStation)
 
@@ -42,6 +43,7 @@ class SatelliteStationSpec extends AnyFlatSpec {
     io.outSyncFlag := dut.io.outSyncFlag
     io.nodeId := dut.io.nodeId
     io.fullIntr := dut.io.stateBusBufferFullInterrupt
+    io.fromCoreNonEmpty := dut.io.fromCoreStateBusBufferNonEmpty
     io.toCore <> dut.io.toCoreStateBusPort
     dut.io.fromCoreStateBusPort <> io.fromCore
   }

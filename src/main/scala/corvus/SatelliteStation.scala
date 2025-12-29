@@ -30,6 +30,7 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
   val io = IO(new Bundle {
     val ctrlAXI4Slave = new CtrlAXI4IO(addrBits, dataBits)
     val stateBusBufferFullInterrupt = Output(Bool())
+    val fromCoreStateBusBufferNonEmpty = Output(Bool())
     val inSyncFlag = Input(UInt(p.syncTreeConfig.flagWidth.W))
     val outSyncFlag = Output(UInt(p.syncTreeConfig.flagWidth.W))
     val nodeId = Output(UInt(dstWidth.W))
@@ -93,5 +94,9 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
 
   io.stateBusBufferFullInterrupt := toCoreStateBusBuffers
     .map(buf => !buf.io.enq.ready)
+    .reduce(_ || _)
+
+  io.fromCoreStateBusBufferNonEmpty := fromCoreStateBusBuffers
+    .map(_.io.deq.valid)
     .reduce(_ || _)
 }

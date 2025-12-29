@@ -76,6 +76,18 @@ class CtrlAXI4Slave(
   readQueueCtrl.io.queues <> io.readQueues
   writeQueueCtrl.io.queues <> io.writeQueues
 
+  // Local channel queues let W beats arrive before AW without losing ordering
+  private val awQueue = Module(new Queue(io.axi.aw.bits.cloneType, entries = 2, flow = true))
+  private val wQueue = Module(new Queue(io.axi.w.bits.cloneType, entries = 2, flow = true))
+
+  awQueue.io.enq.valid := io.axi.aw.valid
+  awQueue.io.enq.bits := io.axi.aw.bits
+  io.axi.aw.ready := awQueue.io.enq.ready
+
+  wQueue.io.enq.valid := io.axi.w.valid
+  wQueue.io.enq.bits := io.axi.w.bits
+  io.axi.w.ready := wQueue.io.enq.ready
+
   // Default connections
   val subReadIOs = Seq(
     readStatusCtrl.io.axi,
@@ -97,11 +109,11 @@ class CtrlAXI4Slave(
   val subWriteIOs = subReadIOs
   for ((sub, base) <- subWriteIOs.zip(regionBasesBytes)) {
     sub.aw.valid := false.B
-    sub.aw.bits := io.axi.aw.bits
-    sub.aw.bits.addr := io.axi.aw.bits.addr - base.U(addrBits.W)
+    sub.aw.bits := awQueue.io.deq.bits
+    sub.aw.bits.addr := awQueue.io.deq.bits.addr - base.U(addrBits.W)
     sub.ar.bits.addr := io.axi.ar.bits.addr - base.U(addrBits.W)
     sub.w.valid := false.B
-    sub.w.bits := io.axi.w.bits
+    sub.w.bits := wQueue.io.deq.bits
     sub.b.ready := false.B
   }
 
@@ -194,7 +206,7 @@ class CtrlAXI4Slave(
   private val invalidBValid = RegInit(false.B)
 
   private val awWordIndex =
-    (io.axi.aw.bits.addr >> addrLsbVal)(wordIndexWidth - 1, 0)
+    (awQueue.io.deq.bits.addr >> addrLsbVal)(wordIndexWidth - 1, 0)
   private val awTarget = selectTarget(awWordIndex)
   private val selectedAwReady = MuxLookup(awTarget, true.B)(
     Seq(
@@ -206,18 +218,18 @@ class CtrlAXI4Slave(
     )
   )
 
-  io.axi.aw.ready := !writeInFlight && selectedAwReady
+  awQueue.io.deq.ready := !writeInFlight && selectedAwReady
 
-  readStatusCtrl.io.axi.aw.valid := io.axi.aw.valid && !writeInFlight && awTarget === targetStatus
-  writeStatusCtrl.io.axi.aw.valid := io.axi.aw.valid && !writeInFlight && awTarget === targetWriteCtrl
-  readQueueCtrl.io.axi.aw.valid := io.axi.aw.valid && !writeInFlight && awTarget === targetReadQueue
-  writeQueueCtrl.io.axi.aw.valid := io.axi.aw.valid && !writeInFlight && awTarget === targetWriteQueue
+  readStatusCtrl.io.axi.aw.valid := awQueue.io.deq.valid && !writeInFlight && awTarget === targetStatus
+  writeStatusCtrl.io.axi.aw.valid := awQueue.io.deq.valid && !writeInFlight && awTarget === targetWriteCtrl
+  readQueueCtrl.io.axi.aw.valid := awQueue.io.deq.valid && !writeInFlight && awTarget === targetReadQueue
+  writeQueueCtrl.io.axi.aw.valid := awQueue.io.deq.valid && !writeInFlight && awTarget === targetWriteQueue
 
-  when(io.axi.aw.fire) {
+  when(awQueue.io.deq.fire) {
     writeInFlight := true.B
     writeTarget := awTarget
     when(awTarget === targetInvalid) {
-      invalidWriteLen := io.axi.aw.bits.len
+      invalidWriteLen := awQueue.io.deq.bits.len
       invalidWriteBeat := 0.U
       invalidBValid := false.B
     }
@@ -231,18 +243,18 @@ class CtrlAXI4Slave(
       targetWriteQueue -> writeQueueCtrl.io.axi.w.ready
     )
   )
-  private val invalidWReady = writeInFlight && writeTarget === targetInvalid && !invalidBValid
-  io.axi.w.ready := writeInFlight && Mux(writeTarget === targetInvalid, invalidWReady, selectedWReady)
+  private val invalidWReady = writeTarget === targetInvalid && !invalidBValid
+  wQueue.io.deq.ready := writeInFlight && Mux(writeTarget === targetInvalid, invalidWReady, selectedWReady)
 
-  readStatusCtrl.io.axi.w.valid := io.axi.w.valid && writeInFlight && writeTarget === targetStatus
-  writeStatusCtrl.io.axi.w.valid := io.axi.w.valid && writeInFlight && writeTarget === targetWriteCtrl
-  readQueueCtrl.io.axi.w.valid := io.axi.w.valid && writeInFlight && writeTarget === targetReadQueue
-  writeQueueCtrl.io.axi.w.valid := io.axi.w.valid && writeInFlight && writeTarget === targetWriteQueue
+  readStatusCtrl.io.axi.w.valid := wQueue.io.deq.valid && writeInFlight && writeTarget === targetStatus
+  writeStatusCtrl.io.axi.w.valid := wQueue.io.deq.valid && writeInFlight && writeTarget === targetWriteCtrl
+  readQueueCtrl.io.axi.w.valid := wQueue.io.deq.valid && writeInFlight && writeTarget === targetReadQueue
+  writeQueueCtrl.io.axi.w.valid := wQueue.io.deq.valid && writeInFlight && writeTarget === targetWriteQueue
 
-  readStatusCtrl.io.axi.w.bits := io.axi.w.bits
-  writeStatusCtrl.io.axi.w.bits := io.axi.w.bits
-  readQueueCtrl.io.axi.w.bits := io.axi.w.bits
-  writeQueueCtrl.io.axi.w.bits := io.axi.w.bits
+  readStatusCtrl.io.axi.w.bits := wQueue.io.deq.bits
+  writeStatusCtrl.io.axi.w.bits := wQueue.io.deq.bits
+  readQueueCtrl.io.axi.w.bits := wQueue.io.deq.bits
+  writeQueueCtrl.io.axi.w.bits := wQueue.io.deq.bits
 
   readStatusCtrl.io.axi.b.ready := io.axi.b.ready && writeInFlight && writeTarget === targetStatus
   writeStatusCtrl.io.axi.b.ready := io.axi.b.ready && writeInFlight && writeTarget === targetWriteCtrl
@@ -274,7 +286,7 @@ class CtrlAXI4Slave(
   io.axi.b.valid := writeInFlight && selectedBValid
   io.axi.b.bits := selectedBBits
 
-  when(io.axi.w.fire && writeInFlight && writeTarget === targetInvalid && !invalidBValid) {
+  when(wQueue.io.deq.fire && writeInFlight && writeTarget === targetInvalid && !invalidBValid) {
     when(invalidWriteBeat === invalidWriteLen) {
       invalidBValid := true.B
     }.otherwise {

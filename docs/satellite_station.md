@@ -20,12 +20,14 @@
 - 仿真核侧
   - `ctrlAXI4Slave`: AXI4 Slave（ABITS/DBITS 如上）。
   - `stateBusBufferFullInterrupt`: Bool，任一写队列满时置高。
+
 - corvus 系统侧
   - `inSyncFlag`: 输入，同步树标志位，宽度 `syncTreeConfig.flagWidth`。
   - `outSyncFlag`: 输出，同步树标志位，宽度 `syncTreeConfig.flagWidth`，复位 0，软件写后保持（由 CtrlAXI4Slave 寄存）。
   - `nodeId`: 输出，StateBus 节点 ID，宽度 `stateBusConfig.dstWidth`，复位 0，软件写后保持（由 CtrlAXI4Slave 寄存）。
   - `toCoreStateBusPort`: `Vec(nStateBus, Flipped(Decoupled(StateBusPacket)))`，来自仿真核写入的包，送往 corvus。
   - `fromCoreStateBusPort`: `Vec(nStateBus, Decoupled(StateBusPacket))`，来自 corvus 的包，供仿真核读取。
+  - `fromCoreStateBusBufferNonEmpty`: Bool，任一 `fromCoreStateBusBuffer` 非空时置高，提示仿真核有待读数据。
 
 ## 主要子模块与数据通路
 - `CtrlAXI4Slave`: 参照 `src/main/scala/corvus/ctrl_axi4_slave/CtrlAXI4Slave.scala`，实例化 4 个子控制器并通过 Crossbar 拼接地址空间。
@@ -57,6 +59,7 @@
 
 ## 中断
 - `stateBusBufferFullInterrupt` 为电平信号，任一 `toCoreStateBusBuffer` 进入满状态置高；全部恢复非满后拉低。无额外屏蔽/粘滞/状态寄存器，保持设计简洁。
+- `fromCoreStateBusBufferNonEmpty` 为电平指示，任一 `fromCoreStateBusBuffer` 非空即置高；全部为空后拉低，便于仿真核轮询/响应有数据可读。
 
 ## StateBusPacket 转换与校验
 - 写方向（仿真核→corvus）：AXI 写入的 `UInt(DBITS)` 拆为 `{dst, payload}` 后送 `toCoreStateBusPort`。`dstWidth` 与 `payloadWidth` 来自 `stateBusConfig`。
