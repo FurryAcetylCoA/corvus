@@ -341,3 +341,7 @@ hs_err_pid*
 
 .bloop/
 .metals/
+obj_dir/
+*.vcd
+*.fst
+*.fst.hier

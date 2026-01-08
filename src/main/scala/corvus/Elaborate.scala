@@ -9,6 +9,6 @@ object Elaborate extends App {
    ChiselStage.emitSystemVerilogFile(
     new Top,
     args,
-    firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info", "-default-layer-specialization=enable")
+    firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
   )
 }

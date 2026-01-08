@@ -3,5 +3,6 @@
     "**/target": true
   },
   "editor.detectIndentation": true,
-  "editor.indentSize": 2
+  "editor.indentSize": 2,
+  "makefile.configureOnOpen": false
 }

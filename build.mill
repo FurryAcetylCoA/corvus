@@ -209,6 +209,7 @@ object corvus extends ChiselModule {
   def forkEnv = Map("PATH" -> envPath)
 
   object test extends SbtTests with TestModule.ScalaTest {
+    def forkEnv = Map("PATH" -> envPath)
     override def ivyDeps = super.ivyDeps() ++ Agg(
       ivy"org.scalatest::scalatest::3.2.19"
     )

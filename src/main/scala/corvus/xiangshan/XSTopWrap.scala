@@ -34,7 +34,7 @@ class XSTopWrap extends RawModule {
   Constantin.init(enableConstantin && !envInFPGA)
   ChiselDB.init(enableChiselDB && !envInFPGA)
 
-  val soc = DisableMonitors(p => LazyModule(new XSTop()(p)))(config)
+  val soc = DisableMonitors(p => LazyModule(new XSCorvusTop()(p)))(config)
   val xstop = Module(soc.module)
 
   val ioRecord = xstop.getChiselPorts.map { case (name, data) =>

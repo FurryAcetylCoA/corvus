@@ -11,7 +11,7 @@ case class CorvusStateBusConfig() {
 }
 case class CorvusConfig() {
   // 在这里定义你的配置参数
-  val numSCore: Int = 16
+  val numSCore: Int = 8
   val simCoreDBusAddrWidth: Int = 32
   val simCoreDBusDataWidth: Int = 64
   val nStateBus: Int = 4

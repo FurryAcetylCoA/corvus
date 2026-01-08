@@ -4,20 +4,22 @@ import circt.stage.ChiselStage
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
+import chisel3.experimental.dataview._
 
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.diplomacy._
 import corvus.{CorvusConfig, Top}
+import utils.VerilogAXI4Record
 
 // The address window served by a memory controller.
 case class AXI4ControllerRegion(
   name: String,
-  address: AddressSet
+  addresses: Seq[AddressSet]
 )
 
 object AXI4ControllerRegion {
   def apply(name: String, base: BigInt, sizeBytes: BigInt): AXI4ControllerRegion = {
-    AXI4ControllerRegion(name, AddressSet(base, sizeBytes - 1))
+    AXI4ControllerRegion(name, Seq(AddressSet(base, sizeBytes - 1)))
   }
 }
 
@@ -27,43 +29,22 @@ case class AXI4NetworkParams(
   core0Base: BigInt,
   perCoreMemoryBytes: BigInt,
   bundleParams: AXI4BundleParameters,
-  coreRequestIdBits: Int,
   maxTransferBytes: Int,
   insertMasterBuffers: Boolean = true,
   insertSlaveBuffers: Boolean = true,
   coreNamePrefix: String = "core",
   controllerNamePrefix: String = "memctrl"
 ) {
-  val numControllers: Int = controllers.length
   val beatBytes: Int = bundleParams.dataBits / 8
-  val prefixWidth = bundleParams.idBits - coreRequestIdBits
-
-  require((numCores - 1).U.getWidth <= prefixWidth,
-    s"Not enough ID bits (${bundleParams.idBits}) to support $numCores cores with $coreRequestIdBits request ID bits each")
 
   val coreAddressSets: Seq[AddressSet] =
     (0 until numCores).map { idx =>
       AddressSet(core0Base + perCoreMemoryBytes * idx, perCoreMemoryBytes - 1)
     }
   coreAddressSets.zipWithIndex.foreach { case (range, idx) =>
-    require(controllers.exists(_.address.overlaps(range)),
+    require(controllers.exists(_.addresses.map(_.overlaps(range)).reduce(_ || _)),
       s"Address window for core $idx (${range.base.toString(16)}-${range.max.toString(16)}) is not covered by any controller")
   }
-
-  val idBasePerCore: Seq[Int] = Seq.tabulate(numCores)(_ << coreRequestIdBits)
-  val idsPerCore: Int = 1 << coreRequestIdBits
-
-  val coreBundleParams: AXI4BundleParameters = bundleParams.copy(idBits = coreRequestIdBits)
-
-  def masterIdRange(idx: Int): IdRange = {
-    val start = idBasePerCore(idx)
-    IdRange(start, start + idsPerCore)
-  }
-}
-
-class AXI4NetworkIO(params: AXI4NetworkParams) extends Bundle {
-  val cores = Vec(params.numCores, Flipped(new AXI4Bundle(params.coreBundleParams)))
-  val controllers = Vec(params.numControllers, new AXI4Bundle(params.bundleParams))
 }
 
 class AXI4NetworkLazy(params: AXI4NetworkParams)(implicit p: Parameters) extends LazyModule {
@@ -73,7 +54,7 @@ class AXI4NetworkLazy(params: AXI4NetworkParams)(implicit p: Parameters) extends
     val node = AXI4MasterNode(Seq(AXI4MasterPortParameters(
       masters = Seq(AXI4MasterParameters(
         name = s"${params.coreNamePrefix}_$idx",
-        id = params.masterIdRange(idx)
+        id = IdRange(0, 1 << params.bundleParams.idBits)
       ))
     )))
     if (params.insertMasterBuffers) {
@@ -89,7 +70,7 @@ class AXI4NetworkLazy(params: AXI4NetworkParams)(implicit p: Parameters) extends
     val device = new SimpleDevice(ctrlName, Seq("corvus,axi4-memory"))
     val slave = AXI4SlaveNode(Seq(AXI4SlavePortParameters(
       slaves = Seq(AXI4SlaveParameters(
-        address = Seq(region.address),
+        address = region.addresses,
         resources = device.reg("mem"),
         regionType = RegionType.UNCACHED,
         executable = true,
@@ -107,55 +88,34 @@ class AXI4NetworkLazy(params: AXI4NetworkParams)(implicit p: Parameters) extends
     slave
   }
 
-  class AXI4NetworkLazyImp extends LazyModuleImp(this) {
+  class AXI4NetworkLazyImp(override val wrapper: AXI4NetworkLazy) extends LazyModuleImp(wrapper) {
     val masterIOs = masterNodes.zipWithIndex.map { case (node, idx) => node.makeIOs()(ValName(s"masterIO_$idx")) }
     val slaveIOs = slaveNodes.zipWithIndex.map { case (node, idx) => node.makeIOs()(ValName(s"slaveIO_$idx")) }
   }
 
-  lazy val module: AXI4NetworkLazyImp = new AXI4NetworkLazyImp
+  lazy val module: AXI4NetworkLazyImp = new AXI4NetworkLazyImp(this)
 }
 
 class AXI4Network(params: AXI4NetworkParams) extends Module {
-  val io = IO(new AXI4NetworkIO(params))
-
-  private val inner = Module {
-    val lm = LazyModule(new AXI4NetworkLazy(params)(Parameters.empty))
+  val inner = Module {
+    val lm = DisableMonitors(p => LazyModule(new AXI4NetworkLazy(params)(p)))(Parameters.empty)
     lm.module
   }
 
-  private val masterPorts = inner.masterIOs.map(_.head)
-  private val slavePorts = inner.slaveIOs.map(_.head)
+  val masterPorts = inner.masterIOs.map(_.head)
+  val slavePorts = inner.slaveIOs.map(_.head)
+
+  val io = IO(new Bundle {
+    val cores = MixedVec(masterPorts.map(_.params).map(param => Flipped(new VerilogAXI4Record(param))))
+    val controllers = MixedVec(slavePorts.map(_.params).map(param => new VerilogAXI4Record(param)))
+  })
 
   (slavePorts zip io.controllers).foreach { case (slavePort, ctrlIO) =>
-    slavePort <> ctrlIO
+    slavePort <> ctrlIO.viewAs[AXI4Bundle]
   }
 
-  (masterPorts zip io.cores).zipWithIndex.foreach { case ((masterPort, coreIO), idx) =>
-    val idBase = params.idBasePerCore(idx).U(params.bundleParams.idBits.W)
-    val coreIdExtAw = Cat(0.U((params.bundleParams.idBits - params.coreRequestIdBits).W), coreIO.aw.bits.id)
-    val coreIdExtAr = Cat(0.U((params.bundleParams.idBits - params.coreRequestIdBits).W), coreIO.ar.bits.id)
-
-    masterPort.aw.valid := coreIO.aw.valid
-    masterPort.aw.bits := coreIO.aw.bits
-    masterPort.aw.bits.id := coreIdExtAw | idBase
-    coreIO.aw.ready := masterPort.aw.ready
-
-    masterPort.ar.valid := coreIO.ar.valid
-    masterPort.ar.bits := coreIO.ar.bits
-    masterPort.ar.bits.id := coreIdExtAr | idBase
-    coreIO.ar.ready := masterPort.ar.ready
-
-    masterPort.w <> coreIO.w
-
-    coreIO.r.valid := masterPort.r.valid
-    coreIO.r.bits := masterPort.r.bits
-    coreIO.r.bits.id := masterPort.r.bits.id(params.coreRequestIdBits-1, 0)
-    masterPort.r.ready := coreIO.r.ready
-
-    coreIO.b.valid := masterPort.b.valid
-    coreIO.b.bits := masterPort.b.bits
-    coreIO.b.bits.id := masterPort.b.bits.id(params.coreRequestIdBits-1, 0)
-    masterPort.b.ready := coreIO.b.ready
+  (masterPorts zip io.cores).foreach { case (masterPort, coreIO) =>
+    masterPort <> coreIO.viewAs[AXI4Bundle]
   }
 }
 
@@ -177,7 +137,6 @@ object Elaborate extends App {
           dataBits = 256,
           idBits = 14
         ),
-        coreRequestIdBits = 8,
         maxTransferBytes = 64
       )
     ),
