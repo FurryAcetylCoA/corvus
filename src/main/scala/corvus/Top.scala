@@ -24,8 +24,9 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   val xs = xsMod.ioRecord.toMap +: Seq.fill(p.numSCore - 1)(noPrefix(CloneModuleAsRecord(xsMod).suggestName("xs")).elements.toMap)
 
   val satelliteAddr = AddressSet(0x30000000L, 0xffffL)
+  val simUartAddr = AddressSet(0x310b0000L, 0xfffL)
   val peripheralAddressSets =
-    AddressSet.misaligned(0x0L, 0x38000000L).flatMap(_.subtract(satelliteAddr)) ++
+    AddressSet.misaligned(0x0L, 0x38000000L).flatMap(_.subtract(satelliteAddr)).flatMap(_.subtract(simUartAddr)) ++
       AddressSet.misaligned(0x38010000L, 0x03ff0000L) ++
       AddressSet.misaligned(0x40000000L, 0x40000000L)
   val peripheralBundleParams = xsMod.xstop.peripheral.params
@@ -36,7 +37,8 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
         AXI4ControllerRegion("clint", 0x38000000L, 0x10000L),
         AXI4ControllerRegion("plic", 0x3c000000L, 0x4000000L),
         AXI4ControllerRegion("sat", satelliteAddr.base, satelliteAddr.mask + 1),
-        AXI4ControllerRegion("peripheral", peripheralAddressSets)
+        AXI4ControllerRegion("peripheral", peripheralAddressSets),
+        AXI4ControllerRegion("simuart", 0x310b0000L, 0x1000L)
       ),
       core0Base = 0x0L,
       perCoreMemoryBytes = 0x80000000L,
@@ -105,6 +107,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   val io = IO(new Bundle {
     val memory = chiselTypeOf(memoryBus.io.controllers)
     val peripheral = chiselTypeOf(peripheralOutBus.io.controllers.head)
+    val simUart = Vec(p.numSCore, chiselTypeOf(peripheralBusMod.io.controllers.head))
     val riscv_rst_vec = Vec(p.numSCore, chiselTypeOf(xsMod.xstop.io.riscv_rst_vec))
     val rtc_clock = Input(Bool())
     val extIntrs = Vec(NrExtIntr, Input(Bool()))
@@ -167,6 +170,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     }
 
     bus.controllers(3) <> peripheralOutBus.io.cores(idx)
+    bus.controllers(4) <> io.simUart(idx)
   }
 
   ringNodes.transpose.foreach { ringSeq =>

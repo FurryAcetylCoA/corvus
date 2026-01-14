@@ -17,6 +17,7 @@ import freechips.rocketchip.diplomacy.LazyModule
 import utils.VerilogAXI4Record
 import corvus.device.StandAloneUART
 import corvus.device.StandAloneFlash
+import corvus.device.StandAloneUART16550
 import difftest.UARTIO
 import freechips.rocketchip.diplomacy.DisableMonitors
 
@@ -57,6 +58,18 @@ class SimTop extends Module with RequireAsyncReset {
   val flashLM = DisableMonitors(q => LazyModule(new StandAloneFlash(false, 0x10000000L, 28, 64, 1)(q)))(diplomacyConfig)
   val flash = Module(flashLM.module)
   peripheralDeviceBus.io.controllers(1) <> flashLM.axi4node.get.getWrappedValue
+
+  val simUart16550LMs = Seq.fill(p.numSCore)(DisableMonitors(q => LazyModule(new StandAloneUART16550(
+    useTL = false,
+    baseAddress = 0x310b0000L,
+    addrWidth = 12,
+    dataWidth = peripheralParams.dataBits,
+    hartNum = 1
+  )(q)))(diplomacyConfig))
+  val simUart16550s = simUart16550LMs.map(lm => Module(lm.module))
+  simUart16550LMs.zip(corvusTop.io.simUart).foreach { case (lm, axi) =>
+    axi <> lm.axi4node.get.getWrappedValue
+  }
 
   val l_simAXIMems = corvusTop.memoryBus.inner.wrapper.slaveNodes.map { slaveNode =>
     AXI4MemorySlave(
