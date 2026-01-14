@@ -62,17 +62,6 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     )
   ))
 
-  val plicBus = Module(new AXI4Network(
-    AXI4NetworkParams(
-      numCores = p.numSCore,
-      controllers = Seq(AXI4ControllerRegion("plic", 0x3c000000L, 0x4000000L)),
-      core0Base = 0x3c000000L,
-      perCoreMemoryBytes = 0x1L,
-      bundleParams = peripheralBundleParams,
-      maxTransferBytes = peripheralBundleParams.dataBits / 8
-    )
-  ))
-
   val peripheralOutBus = Module(new AXI4Network(
     AXI4NetworkParams(
       numCores = p.numSCore,
@@ -104,6 +93,18 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
 
   val NrExtIntr = 64
 
+  val xsParameters: Parameters = XSTopWrap.config
+
+  val standAlonePlicLMs = Seq.fill(p.numSCore)(DisableMonitors(q => LazyModule(new StandAlonePLIC(
+    useTL = false,
+    baseAddress = 0x3c000000L,
+    addrWidth = 32,
+    dataWidth = peripheralBundleParams.dataBits,
+    hartNum = 1,
+    extIntrNum = NrExtIntr
+  )(q)))(xsParameters))
+  val standAlonePlics =  standAlonePlicLMs.foreach(lm => Module(lm.module))
+
   val io = IO(new Bundle {
     val memory = chiselTypeOf(memoryBus.io.controllers)
     val peripheral = chiselTypeOf(peripheralOutBus.io.controllers.head)
@@ -117,7 +118,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
 
   peripheralBuses.zipWithIndex.foreach { case (bus, idx) =>
     bus.controllers(0) <> clintBus.io.cores(idx)
-    bus.controllers(1) <> plicBus.io.cores(idx)
+    bus.controllers(1) <> standAlonePlicLMs(idx).axi4node.get
     val sat = satelliteStations(idx)
     val satAxi = bus.controllers(2).viewAs[AXI4Bundle]
 
@@ -179,8 +180,6 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     }
   }
 
-  val xsParameters: Parameters = XSTopWrap.config
-
   val standAloneClintLM = DisableMonitors(q => LazyModule(new StandAloneCLINT(
     useTL = false,
     baseAddress = 0x38000000L,
@@ -195,17 +194,9 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   rtcTick := Cat(rtcTick(1, 0), io.rtc_clock)
   standAloneClint.io.rtcTick := rtcTick(1) && !rtcTick(2)
 
-  val standAlonePlicLM = DisableMonitors(q => LazyModule(new StandAlonePLIC(
-    useTL = false,
-    baseAddress = 0x3c000000L,
-    addrWidth = 32,
-    dataWidth = peripheralBundleParams.dataBits,
-    hartNum = p.numSCore,
-    extIntrNum = NrExtIntr
-  )(q)))(xsParameters)
-  val standAlonePlic = Module(standAlonePlicLM.module)
-  plicBus.io.controllers.head <> standAlonePlicLM.axi4node.get
-  standAlonePlicLM.extIntrs.head := io.extIntrs
+  standAlonePlicLMs.foreach { lm =>
+    lm.extIntrs.head := io.extIntrs
+  }
 
   peripheralOutBus.io.controllers.head <> io.peripheral
 
@@ -221,7 +212,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     xsio_clint.head := standAloneClintLM.int(idx)
 
     val xsio_plic = xsio("plic").asInstanceOf[HeterogeneousBag[Vec[Bool]]]
-    xsio_plic.toSeq.zip(standAlonePlicLM.int.slice(2 * idx, 2 * (idx + 1))).foreach {
+    xsio_plic.toSeq.zip(standAlonePlicLMs(idx).int).foreach {
       case (l, r) => l := r
     }
 
