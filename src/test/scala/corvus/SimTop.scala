@@ -70,6 +70,12 @@ class SimTop extends Module with RequireAsyncReset {
   simUart16550LMs.zip(corvusTop.io.simUart).foreach { case (lm, axi) =>
     axi <> lm.axi4node.get.getWrappedValue
   }
+  simUart16550s.foreach { uart16550 =>
+    uart16550.io.in.ch := 0.U
+    when(uart16550.io.out.valid) {
+      printf("%c", uart16550.io.out.ch)
+    }
+  }
 
   val l_simAXIMems = corvusTop.memoryBus.inner.wrapper.slaveNodes.map { slaveNode =>
     AXI4MemorySlave(
