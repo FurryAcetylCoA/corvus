@@ -19,4 +19,5 @@ case class CorvusConfig() {
   val fromCoreStateBusBufferDepth: Int = 4
   val syncTreeConfig = CorvusSyncTreeConfig()
   val stateBusConfig = CorvusStateBusConfig()
+  val satelliteIRQNum: Int = 5
 }

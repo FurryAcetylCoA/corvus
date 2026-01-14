@@ -215,6 +215,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     xsio_plic.toSeq.zip(standAlonePlicLMs(idx).int).foreach {
       case (l, r) => l := r
     }
+    standAlonePlicLMs(idx).int.head(p.satelliteIRQNum - 1) := satelliteStations(idx).io.stateBusBufferFullInterrupt
 
     val xsio_nmi = xsio("nmi").asInstanceOf[HeterogeneousBag[Vec[Bool]]]
     xsio_nmi := 0.U.asTypeOf(xsio_nmi)
