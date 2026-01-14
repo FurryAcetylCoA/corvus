@@ -303,6 +303,10 @@ check-format:
 reformat:
 	mill xiangshan.reformat
 
+corvus:
+	mill -i corvus.test.runMain corvus.test.Elaborate --target-dir build/rtl --target systemverilog --split-verilog --dump-fir --throw-on-first-error
+	$(MAKE) -C ./src/test/csrc sim
+
 # verilator simulation
 emu-mk: sim-verilog
 	$(MAKE) -C ./XiangShan/difftest emu-mk NUM_CORES=$(NUM_CORES) RTL_SUFFIX=$(RTL_SUFFIX)
