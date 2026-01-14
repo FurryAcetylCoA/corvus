@@ -111,7 +111,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     val simUart = Vec(p.numSCore, chiselTypeOf(peripheralBusMod.io.controllers.head))
     val riscv_rst_vec = Vec(p.numSCore, chiselTypeOf(xsMod.xstop.io.riscv_rst_vec))
     val rtc_clock = Input(Bool())
-    val extIntrs = Vec(NrExtIntr, Input(Bool()))
+    val extIntrs = Vec(p.numSCore, Vec(NrExtIntr, Input(Bool())))
   })
 
   memoryBus.io.controllers <> io.memory
@@ -194,8 +194,8 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   rtcTick := Cat(rtcTick(1, 0), io.rtc_clock)
   standAloneClint.io.rtcTick := rtcTick(1) && !rtcTick(2)
 
-  standAlonePlicLMs.foreach { lm =>
-    lm.extIntrs.head := io.extIntrs
+  standAlonePlicLMs.zip(io.extIntrs).foreach { case (lm, intrs) =>
+    lm.extIntrs.head := intrs
   }
 
   peripheralOutBus.io.controllers.head <> io.peripheral
@@ -215,7 +215,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     xsio_plic.toSeq.zip(standAlonePlicLMs(idx).int).foreach {
       case (l, r) => l := r
     }
-    standAlonePlicLMs(idx).int.head(p.satelliteIRQNum - 1) := satelliteStations(idx).io.stateBusBufferFullInterrupt
+    standAlonePlicLMs(idx).extIntrs.head(p.satelliteIRQNum - 1) := satelliteStations(idx).io.stateBusBufferFullInterrupt
 
     val xsio_nmi = xsio("nmi").asInstanceOf[HeterogeneousBag[Vec[Bool]]]
     xsio_nmi := 0.U.asTypeOf(xsio_nmi)

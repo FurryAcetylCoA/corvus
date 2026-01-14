@@ -20,4 +20,5 @@ case class CorvusConfig() {
   val syncTreeConfig = CorvusSyncTreeConfig()
   val stateBusConfig = CorvusStateBusConfig()
   val satelliteIRQNum: Int = 5
+  val uartIRQNum: Int = 0xa
 }

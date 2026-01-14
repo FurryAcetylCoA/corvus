@@ -91,6 +91,10 @@ class SimTop extends Module with RequireAsyncReset {
   }
 
   corvusTop.io.extIntrs := 0.U.asTypeOf(corvusTop.io.extIntrs)
+  corvusTop.io.extIntrs zip simUart16550s.map(_.io_int.head.head) foreach { case (topIntrs, int) =>
+    topIntrs := 0.U.asTypeOf(topIntrs)
+    topIntrs(p.uartIRQNum - 1) := int
+  }
   corvusTop.io.riscv_rst_vec.foreach(_ := 0x80000000L.U)
 
   // soc.io.rtc_clock is a div100 of soc.io.clock
