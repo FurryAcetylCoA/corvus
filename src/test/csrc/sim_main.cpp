@@ -1,3 +1,4 @@
+#include "sim_main.h"
 #include "VSimTop.h"
 #include "common.h"
 #include "flash.h"
@@ -6,25 +7,15 @@
 #include "verilated_fst_c.h"
 
 #include <getopt.h>
-#include <cstdint>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
+#include <signal.h>
 #include <string>
 
 static vluint64_t main_time = 0;
 double sc_time_stamp() { return static_cast<double>(main_time); }
 
-struct SimConfig {
-  std::string image;
-  std::string flash;
-  std::string mem_size_str;
-  std::string wave_path = "sim.fst";
-  uint64_t mem_size_bytes = 2ULL * 1024 * 1024 * 1024; // match RAM_SIZE in DifftestMem1R1W
-  uint64_t max_cycles = 0;
-  uint64_t reset_cycles = 16;
-  bool enable_wave = false;
-};
 
 static void print_help(const char *exe) {
   std::cout << "Usage: " << exe << " [options]\n"
@@ -79,6 +70,10 @@ int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
   SimConfig cfg = parse_args(argc, argv);
 
+  if (signal(SIGINT, sig_handler) == SIG_ERR) {
+    printf("\ncan't catch SIGINT\n");
+  }
+
   common_init(argv[0]);
   init_ram(cfg.image.empty() ? nullptr : cfg.image.c_str(), cfg.mem_size_bytes);
   init_flash(cfg.flash.empty() ? nullptr : cfg.flash.c_str());
@@ -105,7 +100,7 @@ int main(int argc, char **argv) {
   };
 
   dut->reset = 0;
-  dut->io_uart_in_ch = 0;
+  // dut->io_uart_in_ch = 0;
   step_half(0);
   dut->reset = 1;
   step_half(0);
@@ -115,16 +110,14 @@ int main(int argc, char **argv) {
   dut->reset = 0;
 
   uint64_t cycles = 0;
+  const auto sim_start_time = std::chrono::steady_clock::now();
   while (!Verilated::gotFinish() && (cfg.max_cycles == 0 || cycles < cfg.max_cycles)) {
-    dut->io_uart_in_ch = 0;
+    if (signal_num) break;
+    // dut->io_uart_in_ch = 0;
 
     tick();
     cycles++;
-
-    if (dut->io_uart_out_valid) {
-      std::cout << static_cast<char>(dut->io_uart_out_ch);
-      std::cout.flush();
-    }
+    print_all_uart_outs(dut);
     // if (dut->io_uart_in_valid) {
     //   int available = std::cin.rdbuf()->in_avail();
     //   if (available > 0) {
@@ -137,6 +130,13 @@ int main(int argc, char **argv) {
 
   if (cfg.max_cycles && cycles >= cfg.max_cycles) {
     std::cout << "\n[sim] reached max cycles " << cfg.max_cycles << "\n";
+  }
+
+  if (signal_num) {
+    const auto sim_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - sim_start_time).count();
+    eprintf(ANSI_COLOR_YELLOW "SOME SIGNAL STOPS THE PROGRAM\n" ANSI_COLOR_RESET);
+    eprintf(ANSI_COLOR_MAGENTA "cycleCnt = %'" PRIu64 "\n" ANSI_COLOR_RESET, cycles);
+    eprintf(ANSI_COLOR_MAGENTA "simTime = %.3f s\n" ANSI_COLOR_RESET, sim_elapsed);
   }
 
   if (tfp) {

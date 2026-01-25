@@ -26,7 +26,7 @@ class SimTop extends Module with RequireAsyncReset {
   val diplomacyConfig = new Config((_, _, _) => { case LogUtilsOptionsKey => LogUtilsOptions(false, false, true) })
 
   val io = IO(new Bundle {
-    val uart = new UARTIO
+    val uart = Vec(p.numSCore + 1, new UARTIO)
   })
 
   val corvusTop = Module(new Top)
@@ -53,7 +53,7 @@ class SimTop extends Module with RequireAsyncReset {
   val uartLM = DisableMonitors(q => LazyModule(new StandAloneUART(false, 0x40600000L, 6, 64, 1)(q)))(diplomacyConfig)
   val uart = Module(uartLM.module)
   peripheralDeviceBus.io.controllers(0) <> uartLM.axi4node.get.getWrappedValue
-  io.uart <> uart.io
+  io.uart.head <> uart.io
 
   val flashLM = DisableMonitors(q => LazyModule(new StandAloneFlash(false, 0x10000000L, 28, 64, 1)(q)))(diplomacyConfig)
   val flash = Module(flashLM.module)
@@ -70,11 +70,8 @@ class SimTop extends Module with RequireAsyncReset {
   simUart16550LMs.zip(corvusTop.io.simUart).foreach { case (lm, axi) =>
     axi <> lm.axi4node.get.getWrappedValue
   }
-  simUart16550s.foreach { uart16550 =>
-    uart16550.io.in.ch := 0.U
-    when(uart16550.io.out.valid) {
-      printf("%c", uart16550.io.out.ch)
-    }
+  simUart16550s zip io.uart.tail foreach { case (uart16550, uartIO) =>
+    uart16550.io <> uartIO
   }
 
   val l_simAXIMems = corvusTop.memoryBus.inner.wrapper.slaveNodes.map { slaveNode =>
