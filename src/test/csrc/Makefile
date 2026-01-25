@@ -7,6 +7,7 @@ XS_CONFIG_DIR := $(XS_DIFFTEST_DIR)/config
 
 BUILD_DIR ?= $(C_SRC_DIR)/obj_dir
 VERILATOR ?= verilator
+EMU_THREADS ?= 1
 
 CXX_SRCS := $(C_SRC_DIR)/sim_main.cpp \
             $(XS_COMMON_DIR)/common.cpp \
@@ -20,7 +21,7 @@ CFLAGS := -std=c++17 -mcmodel=medium -DNO_GZ_COMPRESSION -DNO_ZSTD_COMPRESSION \
           -I$(XS_COMMON_DIR) -I$(XS_CONFIG_DIR) -I$(C_SRC_DIR)
 LDFLAGS := -pthread
 
-VERILATOR_FLAGS := -O3 --sv --cc --exe --top-module SimTop \
+VERILATOR_FLAGS := -O3 --sv --cc --exe --top-module SimTop --threads $(EMU_THREADS) \
   --Mdir $(BUILD_DIR) -I$(C_SRC_DIR) -I$(XS_COMMON_DIR) -I$(XS_CONFIG_DIR) \
   -y $(RTL_DIR) -f $(RTL_DIR)/filelist.f -v $(C_SRC_DIR)/DifftestMacros.v --trace-fst \
   -CFLAGS "$(CFLAGS)" -LDFLAGS "$(LDFLAGS)" \
