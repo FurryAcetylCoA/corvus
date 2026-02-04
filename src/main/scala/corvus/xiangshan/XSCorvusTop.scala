@@ -20,7 +20,6 @@ import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.jtag.JTAGIO
 import chisel3.experimental.annotate
 import sifive.enterprise.firrtl.NestedPrefixModulesAnnotation
-import scala.collection.mutable.Map
 
 import device.SYSCNTConsts._
 import freechips.rocketchip.devices.tilelink._
@@ -221,6 +220,20 @@ class SoCMisc()(implicit p: Parameters) extends BaseSoC
   with HaveAXI4PeripheralPort
   with HaveSlaveAXI4Port
 {
+  override def onChipPeripheralRanges: Map[String, AddressSet] = Map(
+    "BEU"   -> soc.BEURange,
+    "PLIC"  -> soc.PLICRange,
+    "PLL"   -> soc.PLLRange,
+    "UARTLITE" -> soc.UARTLiteRange,
+    "UART16550" -> soc.UART16550Range,
+    "DEBUG" -> p(DebugModuleKey).get.address,
+    "MMPMA" -> AddressSet(mmpma.address, mmpma.mask)
+  ) ++ (
+    if (soc.L3CacheParamsOpt.map(_.ctrl.isDefined).getOrElse(false))
+      Map("L3CTL" -> AddressSet(soc.L3CacheParamsOpt.get.ctrl.get.address, 0xffff))
+    else
+      Map()
+  )
 
   val peripheral_ports = TLTempNode()
   val core_to_l3_ports = TLTempNode()
