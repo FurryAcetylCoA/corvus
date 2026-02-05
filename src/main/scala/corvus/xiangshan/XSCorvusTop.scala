@@ -222,7 +222,6 @@ class SoCMisc()(implicit p: Parameters) extends BaseSoC
 {
   override def onChipPeripheralRanges: Map[String, AddressSet] = Map(
     "BEU"   -> soc.BEURange,
-    "PLIC"  -> soc.PLICRange,
     "PLL"   -> soc.PLLRange,
     "UARTLITE" -> soc.UARTLiteRange,
     "UART16550" -> soc.UART16550Range,
