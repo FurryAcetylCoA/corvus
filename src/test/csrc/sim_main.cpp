@@ -10,8 +10,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 #include <signal.h>
 #include <string>
+#include <filesystem>
 
 static vluint64_t main_time = 0;
 double sc_time_stamp() { return static_cast<double>(main_time); }
@@ -26,6 +28,8 @@ static void print_help(const char *exe) {
             << "  -r, --reset-cycles=N    number of reset cycles (default 16)\n"
             << "  -w, --wave              enable FST dump (default path sim.fst)\n"
             << "      --wave-file=PATH    waveform output path (requires --wave)\n"
+            << "  -l, --log               enable UART log to files\n"
+            << "      --log-path=PATH     UART log directory (default: logs)\n"
             << "  -h, --help              show this message\n";
 }
 
@@ -35,11 +39,12 @@ static SimConfig parse_args(int argc, char **argv) {
       {"image", required_argument, nullptr, 'i'},      {"flash", required_argument, nullptr, 'f'},
       {"mem-size", required_argument, nullptr, 'm'},   {"max-cycles", required_argument, nullptr, 'c'},
       {"reset-cycles", required_argument, nullptr, 'r'}, {"wave", no_argument, nullptr, 'w'},
-      {"wave-file", required_argument, nullptr, 0},    {"help", no_argument, nullptr, 'h'}, {0, 0, 0, 0}};
+      {"wave-file", required_argument, nullptr, 0},    {"log", no_argument, nullptr, 'l'},
+      {"log-path", required_argument, nullptr, 0},     {"help", no_argument, nullptr, 'h'}, {0, 0, 0, 0}};
 
   while (true) {
     int idx = 0;
-    int opt = getopt_long(argc, argv, "hi:f:m:c:r:w", long_opts, &idx);
+    int opt = getopt_long(argc, argv, "hi:f:m:c:r:wl", long_opts, &idx);
     if (opt == -1) break;
     switch (opt) {
       case 'i': cfg.image = optarg; break;
@@ -48,10 +53,13 @@ static SimConfig parse_args(int argc, char **argv) {
       case 'c': cfg.max_cycles = std::strtoull(optarg, nullptr, 0); break;
       case 'r': cfg.reset_cycles = std::strtoull(optarg, nullptr, 0); break;
       case 'w': cfg.enable_wave = true; break;
+      case 'l': cfg.enable_log = true; break;
       case 'h': print_help(argv[0]); std::exit(0);
       case 0:
         if (std::string(long_opts[idx].name) == "wave-file") {
           cfg.wave_path = optarg;
+        } else if (std::string(long_opts[idx].name) == "log-path") {
+          cfg.log_path = optarg;
         }
         break;
       default:
@@ -77,6 +85,12 @@ int main(int argc, char **argv) {
   common_init(argv[0]);
   init_ram(cfg.image.empty() ? nullptr : cfg.image.c_str(), cfg.mem_size_bytes);
   init_flash(cfg.flash.empty() ? nullptr : cfg.flash.c_str());
+
+  // Setup UART logs
+  if (cfg.enable_log) {
+    std::filesystem::create_directories(cfg.log_path);
+    init_all_uart_logs<VSimTop>(cfg.log_path);
+  }
 
   VSimTop *dut = new VSimTop();
   VerilatedFstC *tfp = nullptr;
@@ -118,6 +132,7 @@ int main(int argc, char **argv) {
     tick();
     cycles++;
     print_all_uart_outs(dut);
+    if (cfg.enable_log) log_all_uart_outs(dut);
     // if (dut->io_uart_in_valid) {
     //   int available = std::cin.rdbuf()->in_avail();
     //   if (available > 0) {
