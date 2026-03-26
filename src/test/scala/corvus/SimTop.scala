@@ -23,10 +23,11 @@ import freechips.rocketchip.diplomacy.DisableMonitors
 
 class SimTop extends Module with RequireAsyncReset {
   implicit private val p: CorvusConfig = CorvusConfig()
+  val numTotalCore = p.numSCore + 1 // 1 master + numSCore satellites
   val diplomacyConfig = new Config((_, _, _) => { case LogUtilsOptionsKey => LogUtilsOptions(false, false, true) })
 
   val io = IO(new Bundle {
-    val uart = Vec(p.numSCore + 1, new UARTIO)
+    val uart = Vec(numTotalCore + 1, new UARTIO) // 1 main UART + numTotalCore simUARTs
   })
 
   val corvusTop = Module(new Top)
@@ -59,7 +60,7 @@ class SimTop extends Module with RequireAsyncReset {
   val flash = Module(flashLM.module)
   peripheralDeviceBus.io.controllers(1) <> flashLM.axi4node.get.getWrappedValue
 
-  val simUart16550LMs = Seq.fill(p.numSCore)(DisableMonitors(q => LazyModule(new StandAloneUART16550(
+  val simUart16550LMs = Seq.fill(numTotalCore)(DisableMonitors(q => LazyModule(new StandAloneUART16550(
     useTL = false,
     baseAddress = 0x310b0000L,
     addrWidth = 12,

@@ -303,8 +303,10 @@ check-format:
 reformat:
 	mill xiangshan.reformat
 
-corvus:
+corvus-sim-verilog:
 	mill -i corvus.test.runMain corvus.test.Elaborate --target-dir build/rtl --target systemverilog --split-verilog --dump-fir --throw-on-first-error
+
+corvus: corvus-sim-verilog
 	$(MAKE) -C ./src/test/csrc sim
 
 # verilator simulation

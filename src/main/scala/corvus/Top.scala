@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import corvus.SatelliteStation
 import corvus.state_bus.RingNode
+import corvus.sync_tree.SyncTree
 import corvus.xiangshan.XSTopWrap
 import chisel3.experimental.{CloneModuleAsRecord, noPrefix}
 import chisel3.experimental.dataview._
@@ -18,10 +19,11 @@ import freechips.rocketchip.util.HeterogeneousBag
 
 
 class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
-  println(s"Top: NUM_S_CORE = ${p.numSCore}")
+  val numTotalCore = p.numSCore + 1 // 1 master + numSCore satellites
+  println(s"Top: NUM_S_CORE = ${p.numSCore}, NUM_TOTAL_CORE = $numTotalCore (1 master + ${p.numSCore} satellites)")
 
   val xsMod = Module(new XSTopWrap).suggestName("xs")
-  val xs = xsMod.ioRecord.toMap +: Seq.fill(p.numSCore - 1)(noPrefix(CloneModuleAsRecord(xsMod).suggestName("xs")).elements.toMap)
+  val xs = xsMod.ioRecord.toMap +: Seq.fill(numTotalCore - 1)(noPrefix(CloneModuleAsRecord(xsMod).suggestName("xs")).elements.toMap)
 
   val satelliteAddr = AddressSet(0x30000000L, 0xffffL)
   val simUartAddr = AddressSet(0x310b0000L, 0xfffL)
@@ -46,14 +48,17 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
       maxTransferBytes = peripheralBundleParams.dataBits / 8
     )
   )).suggestName("peripheral_bus")
-  val peripheralBuses = peripheralBusMod.io +: Seq.fill(p.numSCore - 1)(noPrefix(CloneModuleAsRecord(peripheralBusMod).suggestName("peripheral_bus")).elements("io").asInstanceOf[peripheralBusMod.io.type])
+  val peripheralBuses = peripheralBusMod.io +: Seq.fill(numTotalCore - 1)(noPrefix(CloneModuleAsRecord(peripheralBusMod).suggestName("peripheral_bus")).elements("io").asInstanceOf[peripheralBusMod.io.type])
 
-  val satelliteStations = Seq.fill(p.numSCore)(Module(new SatelliteStation))
-  val ringNodes = Seq.fill(p.numSCore)(Seq.fill(p.nStateBus)(Module(new RingNode)))
+  // Index 0 = master station, indices 1..numSCore = satellite stations
+  // Master station reuses SatelliteStation (see master_station.md)
+  val satelliteStations = Seq.fill(numTotalCore)(Module(new SatelliteStation))
+  val ringNodes = Seq.fill(numTotalCore)(Seq.fill(p.nStateBus)(Module(new RingNode)))
+  val syncTree = Module(new SyncTree)
 
   val clintBus = Module(new AXI4Network(
     AXI4NetworkParams(
-      numCores = p.numSCore,
+      numCores = numTotalCore,
       controllers = Seq(AXI4ControllerRegion("clint", 0x38000000L, 0x10000L)),
       core0Base = 0x38000000L,
       perCoreMemoryBytes = 0x1L,
@@ -64,7 +69,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
 
   val peripheralOutBus = Module(new AXI4Network(
     AXI4NetworkParams(
-      numCores = p.numSCore,
+      numCores = numTotalCore,
       controllers = Seq(AXI4ControllerRegion("peripheral", peripheralAddressSets)),
       core0Base = 0x0L,
       perCoreMemoryBytes = 0x1L,
@@ -75,10 +80,10 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
 
   val memoryBus = Module(new AXI4Network(
     AXI4NetworkParams(
-      numCores = p.numSCore,
+      numCores = numTotalCore,
       controllers = Seq(
-        AXI4ControllerRegion("mem0", 0x80000000L, p.numSCore * 0x10000000L/* / 2*/),
-        // AXI4ControllerRegion("mem1", 0x80000000L + p.numSCore * 0x10000000L / 2, p.numSCore * 0x10000000L / 2)
+        AXI4ControllerRegion("mem0", AddressSet.misaligned(0x80000000L, numTotalCore.toLong * 0x10000000L)),
+        // AXI4ControllerRegion("mem1", ...)
       ),
       core0Base = 0x80000000L,
       perCoreMemoryBytes = 0x10000000L,
@@ -95,7 +100,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
 
   val xsParameters: Parameters = XSTopWrap.config
 
-  val standAlonePlicLMs = Seq.fill(p.numSCore)(DisableMonitors(q => LazyModule(new StandAlonePLIC(
+  val standAlonePlicLMs = Seq.fill(numTotalCore)(DisableMonitors(q => LazyModule(new StandAlonePLIC(
     useTL = false,
     baseAddress = 0x3c000000L,
     addrWidth = 32,
@@ -108,10 +113,10 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   val io = IO(new Bundle {
     val memory = chiselTypeOf(memoryBus.io.controllers)
     val peripheral = chiselTypeOf(peripheralOutBus.io.controllers.head)
-    val simUart = Vec(p.numSCore, chiselTypeOf(peripheralBusMod.io.controllers.head))
-    val riscv_rst_vec = Vec(p.numSCore, chiselTypeOf(xsMod.xstop.io.riscv_rst_vec))
+    val simUart = Vec(numTotalCore, chiselTypeOf(peripheralBusMod.io.controllers.head))
+    val riscv_rst_vec = Vec(numTotalCore, chiselTypeOf(xsMod.xstop.io.riscv_rst_vec))
     val rtc_clock = Input(Bool())
-    val extIntrs = Vec(p.numSCore, Vec(NrExtIntr, Input(Bool())))
+    val extIntrs = Vec(numTotalCore, Vec(NrExtIntr, Input(Bool())))
   })
 
   memoryBus.io.controllers <> io.memory
@@ -161,7 +166,17 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     satAxi.b.bits.id := satAwId
     sat.io.ctrlAXI4Slave.b.ready := satAxi.b.ready
 
-    sat.io.inSyncFlag := 0.U
+    // SyncTree connections
+    if (idx == 0) {
+      // Master core: drives broadcast tree input, reads merge tree output
+      syncTree.io.masterIn := sat.io.outSyncFlag
+      sat.io.inSyncFlag := syncTree.io.masterOut
+    } else {
+      // Satellite core: feeds merge tree, receives broadcast
+      syncTree.io.slaveIn(idx - 1) := sat.io.outSyncFlag
+      sat.io.inSyncFlag := syncTree.io.slaveOut(idx - 1)
+    }
+
     (0 until p.nStateBus).foreach { i =>
       val ring = ringNodes(idx)(i)
       ring.io.nodeId := sat.io.nodeId
@@ -185,7 +200,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     baseAddress = 0x38000000L,
     addrWidth = 32,
     dataWidth = peripheralBundleParams.dataBits,
-    hartNum = p.numSCore
+    hartNum = numTotalCore
   )(q)))(xsParameters)
   val standAloneClint = Module(standAloneClintLM.module)
   clintBus.io.controllers.head <> standAloneClintLM.axi4node.get
@@ -215,7 +230,10 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     xsio_plic.toSeq.zip(standAlonePlicLMs(idx).int).foreach {
       case (l, r) => l := r
     }
-    standAlonePlicLMs(idx).extIntrs.head(p.satelliteIRQNum - 1) := satelliteStations(idx).io.stateBusBufferFullInterrupt
+    // Master core (idx == 0) uses polling; satellites connect stateBusBufferFullInterrupt to PLIC
+    if (idx > 0) {
+      standAlonePlicLMs(idx).extIntrs.head(p.satelliteIRQNum - 1) := satelliteStations(idx).io.stateBusBufferFullInterrupt
+    }
 
     val xsio_nmi = xsio("nmi").asInstanceOf[HeterogeneousBag[Vec[Bool]]]
     xsio_nmi := 0.U.asTypeOf(xsio_nmi)
