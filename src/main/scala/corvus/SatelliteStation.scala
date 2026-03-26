@@ -30,12 +30,12 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
   val io = IO(new Bundle {
     val ctrlAXI4Slave = new CtrlAXI4IO(addrBits, dataBits)
     val stateBusBufferFullInterrupt = Output(Bool())
-    val fromCoreStateBusBufferNonEmpty = Output(Bool())
+    val toCoreStateBusBufferNonEmpty = Output(Bool())
     val inSyncFlag = Input(UInt(p.syncTreeConfig.flagWidth.W))
     val outSyncFlag = Output(UInt(p.syncTreeConfig.flagWidth.W))
     val nodeId = Output(UInt(dstWidth.W))
-    val toCoreStateBusPort = Vec(nStateBus, Decoupled(new StateBusPacket))
-    val fromCoreStateBusPort = Vec(nStateBus, Flipped(Decoupled(new StateBusPacket)))
+    val toCoreStateBusPort = Vec(nStateBus, Flipped(Decoupled(new StateBusPacket)))
+    val fromCoreStateBusPort = Vec(nStateBus, Decoupled(new StateBusPacket))
   })
 
   private val ctrlAXI =
@@ -61,8 +61,8 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
   ctrlAXI.io.axi <> io.ctrlAXI4Slave
 
   for (i <- 0 until nStateBus) {
-    toCoreStateBusBuffers(i).io.enq <> ctrlAXI.io.writeQueues(i)
-    ctrlAXI.io.readQueues(i) <> fromCoreStateBusBuffers(i).io.deq
+    fromCoreStateBusBuffers(i).io.enq <> ctrlAXI.io.writeQueues(i)
+    ctrlAXI.io.readQueues(i) <> toCoreStateBusBuffers(i).io.deq
   }
 
   private val statusRegs = Wire(Vec(nRS, UInt(dataBits.W)))
@@ -78,7 +78,7 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
   io.outSyncFlag := ctrlAXI.io.control(0)(p.syncTreeConfig.flagWidth - 1, 0)
   io.nodeId := ctrlAXI.io.control(1)(dstWidth - 1, 0)
 
-  toCoreStateBusBuffers.zip(io.toCoreStateBusPort).foreach { case (buf, port) =>
+  fromCoreStateBusBuffers.zip(io.fromCoreStateBusPort).foreach { case (buf, port) =>
     val raw = buf.io.deq.bits
     port.valid := buf.io.deq.valid
     port.bits.dst := raw(dataBits - 1, payloadWidth)
@@ -86,7 +86,7 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
     buf.io.deq.ready := port.ready
   }
 
-  fromCoreStateBusBuffers.zip(io.fromCoreStateBusPort).foreach { case (buf, port) =>
+  toCoreStateBusBuffers.zip(io.toCoreStateBusPort).foreach { case (buf, port) =>
     buf.io.enq.valid := port.valid
     buf.io.enq.bits := Cat(port.bits.dst, port.bits.payload)
     port.ready := buf.io.enq.ready
@@ -96,7 +96,7 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
     .map(buf => !buf.io.enq.ready)
     .reduce(_ || _)
 
-  io.fromCoreStateBusBufferNonEmpty := fromCoreStateBusBuffers
+  io.toCoreStateBusBufferNonEmpty := toCoreStateBusBuffers
     .map(_.io.deq.valid)
     .reduce(_ || _)
 }
