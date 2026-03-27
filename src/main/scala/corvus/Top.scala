@@ -105,7 +105,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     baseAddress = 0x3c000000L,
     addrWidth = 32,
     dataWidth = peripheralBundleParams.dataBits,
-    hartNum = 1,
+    hartNum = numTotalCore,
     extIntrNum = NrExtIntr
   )(q)))(xsParameters))
   val standAlonePlics =  standAlonePlicLMs.foreach(lm => Module(lm.module))
@@ -227,7 +227,8 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     xsio_clint.head := standAloneClintLM.int(idx)
 
     val xsio_plic = xsio("plic").asInstanceOf[HeterogeneousBag[Vec[Bool]]]
-    xsio_plic.toSeq.zip(standAlonePlicLMs(idx).int).foreach {
+    println(s"xsio_plic width: ${xsio_plic.getWidth}, standAlonePlic int width: ${standAlonePlicLMs(idx).int.getWidth}")
+    xsio_plic.toSeq.zip(standAlonePlicLMs(idx).int.slice(2 * idx, 2 * idx + 2)).foreach {
       case (l, r) => l := r
     }
     // Master core (idx == 0) uses polling; satellites connect stateBusBufferFullInterrupt to PLIC
