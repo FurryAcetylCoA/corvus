@@ -131,7 +131,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     val satAwId = RegInit(0.U(satAxi.aw.bits.id.getWidth.W))
 
     sat.io.ctrlAXI4Slave.ar.valid := satAxi.ar.valid
-    sat.io.ctrlAXI4Slave.ar.bits.addr := satAxi.ar.bits.addr
+    sat.io.ctrlAXI4Slave.ar.bits.addr := satAxi.ar.bits.addr - satelliteAddr.base.U  // FIXME： wind up
     sat.io.ctrlAXI4Slave.ar.bits.len := satAxi.ar.bits.len
     sat.io.ctrlAXI4Slave.ar.bits.size := satAxi.ar.bits.size
     sat.io.ctrlAXI4Slave.ar.bits.burst := satAxi.ar.bits.burst
@@ -140,7 +140,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     when(satAxi.ar.fire) { satArId := satAxi.ar.bits.id }
 
     sat.io.ctrlAXI4Slave.aw.valid := satAxi.aw.valid
-    sat.io.ctrlAXI4Slave.aw.bits.addr := satAxi.aw.bits.addr
+    sat.io.ctrlAXI4Slave.aw.bits.addr := satAxi.aw.bits.addr - satelliteAddr.base.U
     sat.io.ctrlAXI4Slave.aw.bits.len := satAxi.aw.bits.len
     sat.io.ctrlAXI4Slave.aw.bits.size := satAxi.aw.bits.size
     sat.io.ctrlAXI4Slave.aw.bits.burst := satAxi.aw.bits.burst
@@ -181,8 +181,8 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
       val ring = ringNodes(idx)(i)
       ring.io.nodeId := sat.io.nodeId
 
-      ring.io.fromCore <> sat.io.toCoreStateBusPort(i)
-      ring.io.toCore <> sat.io.fromCoreStateBusPort(i)
+      ring.io.fromCore <> sat.io.fromCoreStateBusPort(i)
+      ring.io.toCore <> sat.io.toCoreStateBusPort(i)
     }
 
     bus.controllers(3) <> peripheralOutBus.io.cores(idx)
