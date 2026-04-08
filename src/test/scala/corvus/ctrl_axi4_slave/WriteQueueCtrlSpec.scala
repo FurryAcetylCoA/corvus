@@ -1,11 +1,12 @@
 package corvus.ctrl_axi4_slave
 
 import chisel3._
-import chisel3.simulator.EphemeralSimulator._
+import chiseltest._
 import chisel3.util._
+import corvus.TestSimulatorCompat
 import org.scalatest.flatspec.AnyFlatSpec
 
-class WriteQueueCtrlSpec extends AnyFlatSpec {
+class WriteQueueCtrlSpec extends AnyFlatSpec with TestSimulatorCompat {
   private val dataBits = 32
   private val addrBits = 8
   private val nQueues = 8

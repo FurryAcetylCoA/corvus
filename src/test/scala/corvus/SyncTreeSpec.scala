@@ -1,12 +1,12 @@
 package corvus
 
 import chisel3._
-import chisel3.simulator.EphemeralSimulator._
+import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
 import corvus.sync_tree._
 import scala.util.Random
 
-class SyncTreeSpec extends AnyFlatSpec {
+class SyncTreeSpec extends AnyFlatSpec with TestSimulatorCompat {
   implicit private val p: CorvusConfig = CorvusConfig()
   private val width = p.syncTreeConfig.flagWidth
   private val factor = p.syncTreeConfig.syncTreeFactor

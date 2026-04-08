@@ -1,12 +1,13 @@
 package corvus.ctrl_axi4_slave
 
 import chisel3._
-import chisel3.simulator.EphemeralSimulator._
+import chiseltest._
 import chisel3.util._
+import corvus.TestSimulatorCompat
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.collection.mutable.ArrayBuffer
 
-class CtrlAXI4SlaveSpec extends AnyFlatSpec {
+class CtrlAXI4SlaveSpec extends AnyFlatSpec with TestSimulatorCompat {
   private val dataBits = 64
   private val addrBits = 10
   private val nRS = 16

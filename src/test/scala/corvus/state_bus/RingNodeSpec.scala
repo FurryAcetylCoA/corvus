@@ -1,11 +1,11 @@
 package corvus.state_bus
 
 import chisel3._
-import chisel3.simulator.EphemeralSimulator._
+import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
-import corvus.CorvusConfig
+import corvus.{CorvusConfig, TestSimulatorCompat}
 
-class RingNodeSpec extends AnyFlatSpec {
+class RingNodeSpec extends AnyFlatSpec with TestSimulatorCompat {
   implicit private val p: CorvusConfig = CorvusConfig()
 
   private val dstWidth = p.stateBusConfig.dstWidth

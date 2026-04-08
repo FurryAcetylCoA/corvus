@@ -1,11 +1,12 @@
 package corvus.ctrl_axi4_slave
 
 import chisel3._
-import chisel3.simulator.EphemeralSimulator._
 import chisel3.util.log2Ceil
+import corvus.TestSimulatorCompat
+import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
 
-class WriteStatusCtrlSpec extends AnyFlatSpec {
+class WriteStatusCtrlSpec extends AnyFlatSpec with TestSimulatorCompat {
   private val dataBits = 32
   private val addrBits = 8
   private val nRegs = 8
@@ -15,7 +16,7 @@ class WriteStatusCtrlSpec extends AnyFlatSpec {
   behavior of "WriteStatusCtrl"
 
   it should "write unaligned bytes with WSTRB and read back updated values" in {
-    simulate(new WriteStatusCtrl(addrBits, dataBits, nRegs)) { c =>
+    test(new WriteStatusCtrl(addrBits, dataBits, nRegs)) { c =>
       c.reset.poke(true.B); c.clock.step(); c.reset.poke(false.B)
 
       // Prepare write
@@ -83,7 +84,7 @@ class WriteStatusCtrlSpec extends AnyFlatSpec {
   }
 
   it should "handle INCR burst writes across multiple registers" in {
-    simulate(new WriteStatusCtrl(addrBits, dataBits, nRegs)) { c =>
+    test(new WriteStatusCtrl(addrBits, dataBits, nRegs)) { c =>
       c.reset.poke(true.B); c.clock.step(); c.reset.poke(false.B)
 
       c.io.axi.b.ready.poke(false.B)

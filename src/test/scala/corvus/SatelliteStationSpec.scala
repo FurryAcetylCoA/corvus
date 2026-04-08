@@ -1,14 +1,14 @@
 package corvus
 
 import chisel3._
-import chisel3.simulator.EphemeralSimulator._
+import chiseltest._
 import chisel3.util._
 import corvus.ctrl_axi4_slave._
 import corvus.state_bus.StateBusPacket
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.collection.mutable.ArrayBuffer
 
-class SatelliteStationSpec extends AnyFlatSpec {
+class SatelliteStationSpec extends AnyFlatSpec with TestSimulatorCompat {
   implicit private val p: CorvusConfig = CorvusConfig()
 
   private val addrBits = p.simCoreDBusAddrWidth
@@ -70,10 +70,10 @@ class SatelliteStationSpec extends AnyFlatSpec {
     c.io.axi.r.ready.poke(false.B)
     c.io.axi.b.ready.poke(false.B)
     c.io.inSyncFlag.poke(0.U)
-    for (q <- c.io.toCore) {
+    for (q <- c.io.fromCore) {
       q.ready.poke(false.B)
     }
-    for (q <- c.io.fromCore) {
+    for (q <- c.io.toCore) {
       q.valid.poke(false.B)
       q.bits.dst.poke(0.U)
       q.bits.payload.poke(0.U)
@@ -180,25 +180,25 @@ class SatelliteStationSpec extends AnyFlatSpec {
     }
   }
 
-  private def enqueueFromCore(
+  private def enqueueToCore(
       c: SatelliteStationHarness,
       idx: Int,
       dst: BigInt,
       payload: BigInt
   ): Unit = {
-    c.io.fromCore(idx).bits.dst.poke(dst.U)
-    c.io.fromCore(idx).bits.payload.poke(payload.U)
-    c.io.fromCore(idx).valid.poke(true.B)
+    c.io.toCore(idx).bits.dst.poke(dst.U)
+    c.io.toCore(idx).bits.payload.poke(payload.U)
+    c.io.toCore(idx).valid.poke(true.B)
     var guard = 0
-    while (!c.io.fromCore(idx).ready.peek().litToBoolean && guard < 40) {
+    while (!c.io.toCore(idx).ready.peek().litToBoolean && guard < 40) {
       guard += 1; c.clock.step()
     }
-    assert(guard < 40, s"fromCore enqueue timeout for idx $idx")
+    assert(guard < 40, s"toCore enqueue timeout for idx $idx")
     c.clock.step()
-    c.io.fromCore(idx).valid.poke(false.B)
+    c.io.toCore(idx).valid.poke(false.B)
   }
 
-  private def expectToCorePacket(
+  private def expectFromCorePacket(
       c: SatelliteStationHarness,
       idx: Int,
       dst: BigInt,
@@ -206,13 +206,13 @@ class SatelliteStationSpec extends AnyFlatSpec {
       maxCycles: Int = 80
   ): Unit = {
     var cycles = 0
-    c.io.toCore(idx).ready.poke(true.B)
-    while (!c.io.toCore(idx).valid.peek().litToBoolean && cycles < maxCycles) {
+    c.io.fromCore(idx).ready.poke(true.B)
+    while (!c.io.fromCore(idx).valid.peek().litToBoolean && cycles < maxCycles) {
       cycles += 1; c.clock.step()
     }
-    assert(cycles < maxCycles, s"Timed out waiting toCore[$idx] packet")
-    c.io.toCore(idx).bits.dst.expect(dst.U)
-    c.io.toCore(idx).bits.payload.expect(payload.U)
+    assert(cycles < maxCycles, s"Timed out waiting fromCore[$idx] packet")
+    c.io.fromCore(idx).bits.dst.expect(dst.U)
+    c.io.fromCore(idx).bits.payload.expect(payload.U)
     c.clock.step()
   }
 
@@ -246,7 +246,7 @@ class SatelliteStationSpec extends AnyFlatSpec {
     }
   }
 
-  it should "enqueue AXI writes into toCore queues and expose counts/fields" in {
+  it should "enqueue AXI writes into fromCore queues and expose delivered fields" in {
     simulate(new SatelliteStationHarness) { c =>
       resetAndInit(c)
       val idx = 2
@@ -256,21 +256,21 @@ class SatelliteStationSpec extends AnyFlatSpec {
       val word0 = (BigInt(dstVal) << payloadWidth) | payload0
       val word1 = (BigInt(dstVal + 1) << payloadWidth) | payload1
 
-      c.io.toCore(idx).ready.poke(false.B) // hold to observe count
+      c.io.fromCore(idx).ready.poke(false.B) // hold delivery so packets stay queued
       writeBurst(c, writeQueueAddr(idx), Seq(word0))
       writeBurst(c, writeQueueAddr(idx), Seq(word1))
 
       startRead(c, statusAddr(1 + idx), len = 0)
       val countVal = collectReadBeats(c, 1).head
-      assert(countVal == 2, s"Expected count 2 for queue $idx, got $countVal")
+      assert(countVal == 0, s"Expected toCore count 0 for queue $idx, got $countVal")
 
-      // Drain and check field split order
-      expectToCorePacket(c, idx, dstVal, payload0)
-      expectToCorePacket(c, idx, dstVal + 1, payload1)
+      // Drain fromCore output and check field split order.
+      expectFromCorePacket(c, idx, dstVal, payload0)
+      expectFromCorePacket(c, idx, dstVal + 1, payload1)
     }
   }
 
-  it should "accept fromCore packets and serve them via AXI read queues" in {
+  it should "accept toCore packets and serve them via AXI read queues" in {
     simulate(new SatelliteStationHarness) { c =>
       resetAndInit(c)
       val idx = 1
@@ -278,7 +278,7 @@ class SatelliteStationSpec extends AnyFlatSpec {
       val payloadVal = BigInt("ABCDEF123456", 16)
       val combined = (BigInt(dstVal) << payloadWidth) | payloadVal
 
-      enqueueFromCore(c, idx, dstVal, payloadVal)
+      enqueueToCore(c, idx, dstVal, payloadVal)
 
       startRead(c, readQueueAddr(idx), len = 0)
       val beats = collectReadBeats(c, 1)
@@ -292,20 +292,21 @@ class SatelliteStationSpec extends AnyFlatSpec {
       val idx = 0
       val dstVal = 1
       val payloadVal = BigInt("111111111111", 16)
-      val word = (BigInt(dstVal) << payloadWidth) | payloadVal
+      val expectedWord = (BigInt(dstVal) << payloadWidth) | payloadVal
 
-      c.io.toCore(idx).ready.poke(false.B) // block draining
-      // Fill buffer depth (default 4) with individual writes
+      c.io.axi.r.ready.poke(false.B) // block AXI reads so toCore queue stays full
+      // Fill toCore buffer depth (default 4) with packets from the corvus side.
       for (_ <- 0 until p.toCoreStateBusBufferDepth) {
-        writeBurst(c, writeQueueAddr(idx), Seq(word))
+        enqueueToCore(c, idx, dstVal, payloadVal)
       }
 
       c.io.fullIntr.expect(true.B)
 
-      c.io.toCore(idx).ready.poke(true.B)
-      // Drain all entries
+      // Drain all entries through the AXI read queue.
       for (_ <- 0 until p.toCoreStateBusBufferDepth) {
-        expectToCorePacket(c, idx, dstVal, payloadVal)
+        startRead(c, readQueueAddr(idx), len = 0)
+        val beats = collectReadBeats(c, 1)
+        assert(beats.head == expectedWord, s"Read queue data mismatch: ${beats.head}")
       }
       c.io.fullIntr.expect(false.B)
     }
