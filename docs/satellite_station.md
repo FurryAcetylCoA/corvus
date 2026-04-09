@@ -36,7 +36,7 @@
 - 字段映射：`UInt(DBITS.W) = Cat(packet.dst, packet.payload)`，高位为 `dst`。两个方向共用同一布局。
 
 ## 地址空间布局（低地址到高地址）
-记 `N_RS = pow2ceil(1 + nStateBus)`，`N_WS = 2`（已为 2 的幂），`N_RQ = nStateBus`，`N_WQ = nStateBus`。各段大小均为 `数量 * wordBytes`。
+记 `N_RS = pow2ceil(1 + 2*nStateBus)`，`N_WS = 2`（已为 2 的幂），`N_RQ = nStateBus`，`N_WQ = nStateBus`。各段大小均为 `数量 * wordBytes`。
 
 | 段 | 数量 | 作用 | 地址范围（相对 base=0） |
 | - | - | - | - |
@@ -48,6 +48,7 @@
 ### 只读控制寄存器映射
 - 0: `inSyncFlag`,零扩展到 `DBITS`。
 - 1...`nStateBus`: `toCoreStateBusBuffer[i].count`，零扩展。
+- `1+nStateBus`...`2*nStateBus`: `fromCoreStateBusBuffer[i].count`，零扩展。
 - ... `N_RS`:  固定0，填充用
 
 ### 读写控制寄存器映射

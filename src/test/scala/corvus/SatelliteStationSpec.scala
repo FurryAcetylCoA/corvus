@@ -19,7 +19,7 @@ class SatelliteStationSpec extends AnyFlatSpec with TestSimulatorCompat {
   private val wordBytes = dataBits / 8
   private val sizeVal = log2Ceil(wordBytes)
   private val fullStrbMask = (BigInt(1) << wordBytes) - 1
-  private val nRS = 1 << log2Ceil(1 + nStateBus)
+  private val nRS = 1 << log2Ceil(1 + 2 * nStateBus)
   private val nWS = 2
   private val nRQ = nStateBus
   private val nWQ = nStateBus
@@ -57,6 +57,8 @@ class SatelliteStationSpec extends AnyFlatSpec with TestSimulatorCompat {
   private def controlAddr(idx: Int) = writeBase + idx * wordBytes
   private def readQueueAddr(idx: Int) = readQBase + idx * wordBytes
   private def writeQueueAddr(idx: Int) = writeQBase + idx * wordBytes
+  private def toCoreCountStatusAddr(idx: Int) = statusAddr(1 + idx)
+  private def fromCoreCountStatusAddr(idx: Int) = statusAddr(1 + nStateBus + idx)
 
   private def resetAndInit(c: SatelliteStationHarness): Unit = {
     c.reset.poke(true.B)
@@ -260,9 +262,16 @@ class SatelliteStationSpec extends AnyFlatSpec with TestSimulatorCompat {
       writeBurst(c, writeQueueAddr(idx), Seq(word0))
       writeBurst(c, writeQueueAddr(idx), Seq(word1))
 
-      startRead(c, statusAddr(1 + idx), len = 0)
-      val countVal = collectReadBeats(c, 1).head
-      assert(countVal == 0, s"Expected toCore count 0 for queue $idx, got $countVal")
+      startRead(c, toCoreCountStatusAddr(idx), len = 0)
+      val toCoreCountVal = collectReadBeats(c, 1).head
+      assert(toCoreCountVal == 0, s"Expected toCore count 0 for queue $idx, got $toCoreCountVal")
+
+      startRead(c, fromCoreCountStatusAddr(idx), len = 0)
+      val fromCoreCountVal = collectReadBeats(c, 1).head
+      assert(
+        fromCoreCountVal == 2,
+        s"Expected fromCore count 2 for queue $idx, got $fromCoreCountVal"
+      )
 
       // Drain fromCore output and check field split order.
       expectFromCorePacket(c, idx, dstVal, payload0)

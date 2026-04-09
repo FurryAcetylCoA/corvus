@@ -21,7 +21,7 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
   require(p.toCoreStateBusBufferDepth > 0, "toCoreStateBusBufferDepth must be > 0")
   require(p.fromCoreStateBusBufferDepth > 0, "fromCoreStateBusBufferDepth must be > 0")
 
-  private val nRS = 1 << log2Ceil(1 + nStateBus)
+  private val nRS = 1 << log2Ceil(1 + 2 * nStateBus)
   private val nWS = 2
   private val nRQ = nStateBus
   private val nWQ = nStateBus
@@ -72,6 +72,7 @@ class SatelliteStation(implicit p: CorvusConfig) extends Module {
   statusRegs(0) := io.inSyncFlag
   for (i <- 0 until nStateBus) {
     statusRegs(1 + i) := toCoreStateBusBuffers(i).io.count
+    statusRegs(1 + nStateBus + i) := fromCoreStateBusBuffers(i).io.count
   }
   ctrlAXI.io.status := statusRegs
 
