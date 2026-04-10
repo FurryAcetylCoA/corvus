@@ -8,13 +8,22 @@
 遵循 `docs/ctrl_axi4_slave.md` 描述的 AXI4 Slave 约束（ABITS=simCoreDBusAddrWidth，DBITS=simCoreDBusDataWidth，非缓存直映地址空间，INCR 突发，单方向单 outstanding）。
 
 ## 配置参数（`CorvusConfig`）
+- `nMBus`: MBus 条数，必须 `>0` 且 `2^k`。
+- `nSBus`: SBus 条数，必须 `>0`。
+- `nStateBus = nMBus + nSBus`: satellite station 可见的 StateBus 总数，必须 `>0` 且 `2^k`。
 - `simCoreDBusAddrWidth`: 仿真核 AXI 地址宽度（bits）。
 - `simCoreDBusDataWidth`: 仿真核 AXI 数据宽度（bits），`wordBytes = simCoreDBusDataWidth / 8`。
-- `nStateBus`: 并行 StateBus 数量，`>0` 且 `2^k`。
 - `fromCoreStateBusBufferDepth`: 写入 corvus 方向队列深度。
 - `toCoreStateBusBufferDepth`: 从 corvus 读出方向队列深度。
 - `writeQueueWStallTimeoutCycles`（模块内常量，默认 32，`SatelliteStation` 中定义）：流式写队列在 W 通道被背压时的超时门限（周期）；设为 0 可关闭，超时会在超时周期拉高 WREADY 消耗当前 beat，随后在 B 通道返回 SLVERR 结束该笔突发。
 - 约束：`stateBusConfig.dstWidth + stateBusConfig.payloadWidth = simCoreDBusDataWidth`，否则配置时报错。
+
+`SatelliteStation` 还带一个构造参数 `localStateBusCount`，表示该站点本地可见的 StateBus 条数：
+
+- master station 实例化为 `SatelliteStation(p.nMBus)`，因此只暴露 MBus 队列。
+- satellite station 实例化为 `SatelliteStation(p.nStateBus)`，因此同时暴露 MBus 和 SBus 队列。
+
+master station 和 satellite station 的本地控制地址空间大小不同，这是预期行为。
 
 ## 顶层接口
 - 仿真核侧
@@ -25,18 +34,22 @@
   - `inSyncFlag`: 输入，同步树标志位，宽度 `syncTreeConfig.flagWidth`。
   - `outSyncFlag`: 输出，同步树标志位，宽度 `syncTreeConfig.flagWidth`，复位 0，软件写后保持（由 CtrlAXI4Slave 寄存）。
   - `nodeId`: 输出，StateBus 节点 ID，宽度 `stateBusConfig.dstWidth`，复位 0，软件写后保持（由 CtrlAXI4Slave 寄存）。
-  - `fromCoreStateBusPort`: `Vec(nStateBus, Decoupled(StateBusPacket))`，来自仿真核写入的包，送往 corvus。
-  - `toCoreStateBusPort`: `Vec(nStateBus, Flipped(Decoupled(StateBusPacket)))`，来自 corvus 的包，供仿真核读取。
+  - `fromCoreStateBusPort`: `Vec(localStateBusCount, Decoupled(StateBusPacket))`，来自仿真核写入的包，送往 corvus。
+  - `toCoreStateBusPort`: `Vec(localStateBusCount, Flipped(Decoupled(StateBusPacket)))`，来自 corvus 的包，供仿真核读取。
   - `toCoreStateBusBufferNonEmpty`: Bool，任一 `toCoreStateBusBuffer` 非空时置高，提示仿真核有待读数据。
+
+## 本地通道编号
+- 对 master station：本地通道 `0 ..< nMBus` 全部对应 `MBus`。
+- 对 satellite station：本地通道 `0 ..< nMBus` 对应 `MBus`，本地通道 `nMBus ..< nStateBus` 对应 `SBus`。
 
 ## 主要子模块与数据通路
 - `CtrlAXI4Slave`: 参照 `src/main/scala/corvus/ctrl_axi4_slave/CtrlAXI4Slave.scala`，实例化 4 个子控制器并通过 Crossbar 拼接地址空间。
-- `fromCoreStateBusBuffers`: `nStateBus` 个 `Queue`，深度 `fromCoreStateBusBufferDepth`，数据类型 `UInt(DBITS.W)`，AXI 写入；出队经拆字段后喂给 `fromCoreStateBusPort`。
-- `toCoreStateBusBuffers`: `nStateBus` 个 `Queue`，深度 `toCoreStateBusBufferDepth`，数据类型 `UInt(DBITS.W)`，从 `toCoreStateBusPort` 入队；AXI 读取即出队。
+- `fromCoreStateBusBuffers`: `localStateBusCount` 个 `Queue`，深度 `fromCoreStateBusBufferDepth`，数据类型 `UInt(DBITS.W)`，AXI 写入；出队经拆字段后喂给 `fromCoreStateBusPort`。
+- `toCoreStateBusBuffers`: `localStateBusCount` 个 `Queue`，深度 `toCoreStateBusBufferDepth`，数据类型 `UInt(DBITS.W)`，从 `toCoreStateBusPort` 入队；AXI 读取即出队。
 - 字段映射：`UInt(DBITS.W) = Cat(packet.dst, packet.payload)`，高位为 `dst`。两个方向共用同一布局。
 
 ## 地址空间布局（低地址到高地址）
-记 `N_RS = pow2ceil(1 + 2*nStateBus)`，`N_WS = 2`（已为 2 的幂），`N_RQ = nStateBus`，`N_WQ = nStateBus`。各段大小均为 `数量 * wordBytes`。
+记 `N_RS = pow2ceil(1 + 2*localStateBusCount)`，`N_WS = 2`（已为 2 的幂），`N_RQ = localStateBusCount`，`N_WQ = localStateBusCount`。各段大小均为 `数量 * wordBytes`。
 
 | 段 | 数量 | 作用 | 地址范围（相对 base=0） |
 | - | - | - | - |
@@ -47,8 +60,8 @@
 
 ### 只读控制寄存器映射
 - 0: `inSyncFlag`,零扩展到 `DBITS`。
-- 1...`nStateBus`: `toCoreStateBusBuffer[i].count`，零扩展。
-- `1+nStateBus`...`2*nStateBus`: `fromCoreStateBusBuffer[i].count`，零扩展。
+- 1...`localStateBusCount`: `toCoreStateBusBuffer[i].count`，零扩展。
+- `1+localStateBusCount`...`2*localStateBusCount`: `fromCoreStateBusBuffer[i].count`，零扩展。
 - ... `N_RS`:  固定0，填充用
 
 ### 读写控制寄存器映射
@@ -56,7 +69,7 @@
 - 1: `nodeId`（复位 0；读返回当前寄存器值，写遵循 AXI 写掩码，小端拼接，写后保持）。
 
 ### 收/发队列
-每个寄存器均对应一条`StateBus`
+每个寄存器均对应一条本地可见的 `StateBus`。对 master station 只会出现 `MBus`；对 satellite station 则是先 `MBus`、后 `SBus`。
 
 ## 中断
 - `stateBusBufferFullInterrupt` 为电平信号，任一 `toCoreStateBusBuffer` 进入满状态置高；全部恢复非满后拉低。无额外屏蔽/粘滞/状态寄存器，保持设计简洁。

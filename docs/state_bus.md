@@ -2,7 +2,14 @@
 
 状态总线负责在仿真核和主控核之间传递需要同步的状态信息（主要是寄存器状态）。
 
-状态总线采用环形总线结构，由首尾相连的 RingNode 节点组成。每个节点可连接一个仿真核或主控核。
+Corvus 将状态总线分成两类：
+
+- `MBus`：会串过 master station 和全部 satellite station。默认 `nMBus = 2`。
+- `SBus`：只会串过全部 satellite station，不经过 master station。默认 `nSBus = 2`。
+
+因此默认共有 `nStateBus = nMBus + nSBus = 4` 条并行总线。对 satellite station 而言，本地通道 `0 ..< nMBus` 对应 `MBus`，`nMBus ..< nStateBus` 对应 `SBus`；对 master station 而言，只暴露 `MBus` 通道。
+
+每条状态总线都采用环形总线结构，由首尾相连的 RingNode 节点组成。具体哪些节点属于同一条环，取决于它是 `MBus` 还是 `SBus`，详见 `docs/top.md`。
 
 ## 数据包结构 StateBusPacket
 

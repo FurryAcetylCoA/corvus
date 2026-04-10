@@ -51,9 +51,12 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   val peripheralBuses = peripheralBusMod.io +: Seq.fill(numTotalCore - 1)(noPrefix(CloneModuleAsRecord(peripheralBusMod).suggestName("peripheral_bus")).elements("io").asInstanceOf[peripheralBusMod.io.type])
 
   // Index 0 = master station, indices 1..numSCore = satellite stations
-  // Master station reuses SatelliteStation (see master_station.md)
-  val satelliteStations = Seq.fill(numTotalCore)(Module(new SatelliteStation))
-  val ringNodes = Seq.fill(numTotalCore)(Seq.fill(p.nStateBus)(Module(new RingNode)))
+  // Master station reuses SatelliteStation but only exposes MBus queues
+  val masterStation = Module(new SatelliteStation(p.nMBus))
+  val satelliteStations = Seq.fill(numTotalCore - 1)(Module(new SatelliteStation(p.nStateBus)))
+  val allStations = masterStation +: satelliteStations
+  val mBusRingNodes = Seq.fill(numTotalCore)(Seq.fill(p.nMBus)(Module(new RingNode)))
+  val sBusRingNodes = Seq.fill(numTotalCore - 1)(Seq.fill(p.nSBus)(Module(new RingNode)))
   val syncTree = Module(new SyncTree)
 
   val clintBus = Module(new AXI4Network(
@@ -124,7 +127,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
   peripheralBuses.zipWithIndex.foreach { case (bus, idx) =>
     bus.controllers(0) <> clintBus.io.cores(idx)
     bus.controllers(1) <> standAlonePlicLMs(idx).axi4node.get
-    val sat = satelliteStations(idx)
+    val sat = allStations(idx)
     val satAxi = bus.controllers(2).viewAs[AXI4Bundle]
 
     val satArId = RegInit(0.U(satAxi.ar.bits.id.getWidth.W))
@@ -177,19 +180,34 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
       sat.io.inSyncFlag := syncTree.io.slaveOut(idx - 1)
     }
 
-    (0 until p.nStateBus).foreach { i =>
-      val ring = ringNodes(idx)(i)
+    (0 until p.nMBus).foreach { i =>
+      val ring = mBusRingNodes(idx)(i)
       ring.io.nodeId := sat.io.nodeId
 
       ring.io.fromCore <> sat.io.fromCoreStateBusPort(i)
       ring.io.toCore <> sat.io.toCoreStateBusPort(i)
     }
 
+    if (idx > 0) {
+      (0 until p.nSBus).foreach { i =>
+        val ring = sBusRingNodes(idx - 1)(i)
+        ring.io.nodeId := sat.io.nodeId
+
+        ring.io.fromCore <> sat.io.fromCoreStateBusPort(p.nMBus + i)
+        ring.io.toCore <> sat.io.toCoreStateBusPort(p.nMBus + i)
+      }
+    }
+
     bus.controllers(3) <> peripheralOutBus.io.cores(idx)
     bus.controllers(4) <> io.simUart(idx)
   }
 
-  ringNodes.transpose.foreach { ringSeq =>
+  mBusRingNodes.transpose.foreach { ringSeq =>
+    ringSeq.zip(ringSeq.tail :+ ringSeq.head).foreach { case (curr, next) =>
+      curr.io.toNext <> next.io.fromPrev
+    }
+  }
+  sBusRingNodes.transpose.foreach { ringSeq =>
     ringSeq.zip(ringSeq.tail :+ ringSeq.head).foreach { case (curr, next) =>
       curr.io.toNext <> next.io.fromPrev
     }
@@ -233,7 +251,7 @@ class Top(implicit p: CorvusConfig) extends Module with RequireAsyncReset {
     }
     // Master core (idx == 0) uses polling; satellites connect stateBusBufferFullInterrupt to PLIC
     if (idx > 0) {
-      standAlonePlicLMs(idx).extIntrs.head(p.satelliteIRQNum - 1) := satelliteStations(idx).io.stateBusBufferFullInterrupt
+      standAlonePlicLMs(idx).extIntrs.head(p.satelliteIRQNum - 1) := satelliteStations(idx - 1).io.stateBusBufferFullInterrupt
     }
 
     val xsio_nmi = xsio("nmi").asInstanceOf[HeterogeneousBag[Vec[Bool]]]

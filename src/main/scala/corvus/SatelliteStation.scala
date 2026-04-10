@@ -5,15 +5,17 @@ import chisel3.util._
 import corvus.ctrl_axi4_slave._
 import corvus.state_bus.StateBusPacket
 
-class SatelliteStation(implicit p: CorvusConfig) extends Module {
+class SatelliteStation(localStateBusCount: Int)(implicit p: CorvusConfig) extends Module {
+  def this()(implicit p: CorvusConfig) = this(p.nStateBus)
+
   private val addrBits = p.simCoreDBusAddrWidth
   private val dataBits = p.simCoreDBusDataWidth
-  private val nStateBus = p.nStateBus
+  private val nStateBus = localStateBusCount
   private val dstWidth = p.stateBusConfig.dstWidth
   private val payloadWidth = p.stateBusConfig.payloadWidth
 
   require(dataBits == 32 || dataBits == 64, "simCoreDBusDataWidth must be 32 or 64")
-  require(nStateBus > 0 && isPow2(nStateBus), "nStateBus must be power of 2 and > 0")
+  require(nStateBus > 0 && isPow2(nStateBus), "localStateBusCount must be power of 2 and > 0")
   require(
     dstWidth + payloadWidth == dataBits,
     "stateBusConfig.dstWidth + payloadWidth must equal simCoreDBusDataWidth"

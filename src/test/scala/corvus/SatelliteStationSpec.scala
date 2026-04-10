@@ -25,18 +25,20 @@ class SatelliteStationSpec extends AnyFlatSpec with TestSimulatorCompat {
   private val nWQ = nStateBus
 
   /** Harness exposing the DUT IO for easier pokes/peeks. */
-  private class SatelliteStationHarness extends Module {
+  private class SatelliteStationHarness(localStateBusCount: Int = nStateBus) extends Module {
+    private val localNStateBus = localStateBusCount
+
     val io = IO(new Bundle {
       val axi = new CtrlAXI4IO(addrBits, dataBits)
       val inSyncFlag = Input(UInt(p.syncTreeConfig.flagWidth.W))
       val outSyncFlag = Output(UInt(p.syncTreeConfig.flagWidth.W))
       val nodeId = Output(UInt(dstWidth.W))
-      val fromCore = Vec(nStateBus, Decoupled(new StateBusPacket))
-      val toCore = Vec(nStateBus, Flipped(Decoupled(new StateBusPacket)))
+      val fromCore = Vec(localNStateBus, Decoupled(new StateBusPacket))
+      val toCore = Vec(localNStateBus, Flipped(Decoupled(new StateBusPacket)))
       val fullIntr = Output(Bool())
       val toCoreNonEmpty = Output(Bool())
     })
-    val dut = Module(new SatelliteStation)
+    val dut = Module(new SatelliteStation(localNStateBus))
 
     dut.io.ctrlAXI4Slave <> io.axi
     dut.io.inSyncFlag := io.inSyncFlag
@@ -318,6 +320,30 @@ class SatelliteStationSpec extends AnyFlatSpec with TestSimulatorCompat {
         assert(beats.head == expectedWord, s"Read queue data mismatch: ${beats.head}")
       }
       c.io.fullIntr.expect(false.B)
+    }
+  }
+
+  it should "support reduced local state bus count for master station" in {
+    val localStateBusCount = p.nMBus
+    val localNRS = 1 << log2Ceil(1 + 2 * localStateBusCount)
+    val localReadQBase = (localNRS + nWS) * wordBytes
+    val localWriteQBase = (localNRS + nWS + localStateBusCount) * wordBytes
+    val idx = localStateBusCount - 1
+
+    simulate(new SatelliteStationHarness(localStateBusCount)) { c =>
+      resetAndInit(c)
+
+      val dstVal = 0x33
+      val payloadVal = BigInt("123456789ABC", 16)
+      val combined = (BigInt(dstVal) << payloadWidth) | payloadVal
+
+      enqueueToCore(c, idx, dstVal, payloadVal)
+      startRead(c, localReadQBase + idx * wordBytes, len = 0)
+      val readData = collectReadBeats(c, 1).head
+      assert(readData == combined, s"Reduced-bus read queue data mismatch: $readData")
+
+      writeBurst(c, localWriteQBase + idx * wordBytes, Seq(combined))
+      expectFromCorePacket(c, idx, dstVal, payloadVal)
     }
   }
 }
